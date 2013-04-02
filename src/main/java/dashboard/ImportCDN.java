@@ -108,15 +108,15 @@ public class ImportCDN
            AWS_PASS = prop.getProperty("AWS_PASS");
            DELETE_PROCESSED_LOGS = prop.getProperty("DELETE_PROCESSED_LOGS");
                    
-           System.out.println("MIXPANEL PROJECT TOKEN = " + TOKEN);
-       		System.out.println("MIXPANEL API KEY = " + API_KEY);
+           //System.out.println("MIXPANEL PROJECT TOKEN = " + TOKEN);
+       		//System.out.println("MIXPANEL API KEY = " + API_KEY);
        		System.out.println("DELETE_PROCESSED_LOGS = " + DELETE_PROCESSED_LOGS);
     		   System.out.println("S3_BUCKET_NAME = " + prop.getProperty("S3_BUCKET_NAME"));
-       		System.out.println("AWS_USER = " + prop.getProperty("AWS_USER"));
-       		System.out.println("AWS_PASS = " + prop.getProperty("AWS_PASS"));
+       		//System.out.println("AWS_USER = " + prop.getProperty("AWS_USER"));
+       		//System.out.println("AWS_PASS = " + prop.getProperty("AWS_PASS"));
            System.out.println( "===================");
     	} catch (IOException ex) {
-    		ex.printStackTrace();
+    		//ex.printStackTrace();
         System.err.println("Can't find Propertie file - " + propertiesFileName);
         System.err.println("Second argument must be properties file name");
         System.exit(1);
@@ -138,11 +138,12 @@ public class ImportCDN
    public static int readAmazonLogs(int n) throws Exception {
         if (n < 1) return 0;  
         int eventsNumber = 0;
-        String line = null;
         int begin = 0;
         int zips = 0;
+        int postFailures = 0;
         int deletedZips = 0;
         int mixpanelStatus = 0;
+        String line = null;
         
         // Log files Bucket
         AWSCredentials credentials = new BasicAWSCredentials(AWS_USER,AWS_PASS);
@@ -196,7 +197,13 @@ public class ImportCDN
                 System.out.println(eventsNumber + ": " + eventTime + " " + ip );
                 // Track the event in Mixpanel (using the POST import)
                 mixpanelStatus = postCDNEventToMixpanel(ip, "Cloudfront CDN", eventTime, method,  fileName, fName, userAgent, statusCode);
-      
+
+                // If failed  
+                if (mixpanelStatus != 1) {
+                    postFailures++;
+                    System.out.println("   >>> POST event to Mixpanel Failed!!  " + postFailures );
+                 
+                }
             } // while on ZIP file lines
      
             if (mixpanelStatus == 1 & DELETE_PROCESSED_LOGS.equals("YES")) { 
@@ -215,8 +222,10 @@ public class ImportCDN
              }
    
              if (eventsNumber >= n) { 
-                System.out.println("\n>>> " + eventsNumber + " events in " + zips + " Zip files. Deleted " + deletedZips + " Zip files.\n");
-                return eventsNumber;
+               System.out.println("\n>>> " + eventsNumber + " events in " + zips  + " Zip files.");
+               System.out.println("\n>>> " + deletedZips  + " Zip files deleted.");
+               System.out.println("\n>>> " + postFailures + " post Failures\n");
+               return eventsNumber;
             }
          }
                 
@@ -231,7 +240,9 @@ public class ImportCDN
         
        } // while next objectListing
         
-       System.out.println("\n>>> " + eventsNumber + " events in " + zips + " Zip files. Deleted " + deletedZips + " Zip files.\n");
+       System.out.println("\n>>> " + eventsNumber + " events in " + zips  + " Zip files.");
+       System.out.println("\n>>> " + deletedZips  + " Zip files deleted.");
+       System.out.println("\n>>> " + postFailures + " post Failures\n");
        return eventsNumber;
     }
 
@@ -247,7 +258,8 @@ public class ImportCDN
       SimpleDateFormat sdf  = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
       Date date = sdf.parse( eventTime );
       long timeInSecSinceEpoch = date.getTime();
-      if (timeInSecSinceEpoch > 0) timeInSecSinceEpoch = timeInSecSinceEpoch / 1000;   
+      if ( timeInSecSinceEpoch > 0) 
+           timeInSecSinceEpoch = timeInSecSinceEpoch / 1000;   
       
       JSONObject obj1 = new JSONObject();
       obj1.put("distinct_id", ip);
@@ -270,15 +282,20 @@ public class ImportCDN
       return postRequest("http://api.mixpanel.com/import", "data", encodedJSON, "api_key", API_KEY );
      } catch (Exception e) {
          //throw new RuntimeException("Can't POST to Mixpanel.", e);
-         e.printStackTrace();
+         //e.printStackTrace();
+         System.out.println("Exception in postCDNEventToMixpanel");
          return 0;
      }
    }
   
    public static int postRequest(String url, String p1, String v1, String p2, String v2)
    {
-    try {
+   int statusCode = -1;
+   try {
+
+
      String contents = ""; 
+     int result = 0;
      HttpClient client = new HttpClient();
      PostMethod method = new PostMethod( url );
 
@@ -290,17 +307,24 @@ public class ImportCDN
 	   method.addParameter( "verbose", "1" );
 
 	   // Execute the POST method 
-     int statusCode = client.executeMethod( method );
-     contents = method.getResponseBodyAsString();
+     statusCode = client.executeMethod( method );
+
+     if (statusCode == 200) {
+        contents = method.getResponseBodyAsString();
+        if (contents.charAt(11) == '1')
+            result = 1;
+     }
      method.releaseConnection();
-     if (statusCode != 200 || contents.charAt(11) != '1') {  // Post to Mixpanel Failed
+
+     if (statusCode != 200 || result != 1) {  // Post to Mixpanel Failed
         System.out.println("Mixpanel Post respone: " + Integer.toString(statusCode) + " - " + contents);
         return 0;
-     }
-     return 1;
+     }  
+           return 1;
     }
     catch( Exception e ) {
-        e.printStackTrace();
+        //e.printStackTrace();
+        System.out.println("Exception when calling Mixpanel POST. Response: " + statusCode);
         return 0;
     }
   }
